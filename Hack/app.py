@@ -6,16 +6,14 @@ import os
 import torch
 import io
 import base64
+import re
 
 # --- Hugging Face Authentication ---
 # IMPORTANT: You must have your Hugging Face access token set as an environment variable.
-# For local testing, you can also paste it directly below, but it's not recommended for production.
-# The user provided token: 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
 HUGGING_FACE_TOKEN = os.getenv("HUGGING_FACE_HUB_TOKEN", "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")
 os.environ["HUGGING_FACE_HUB_TOKEN"] = HUGGING_FACE_TOKEN
 
 # --- Model Loading (Cached for performance) ---
-# This function will cache the model so it doesn't have to be reloaded on every rerun.
 @st.cache_resource
 def load_granite_model():
     """Loads the ibm-granite/granite-docling-258M model and processor."""
@@ -25,89 +23,112 @@ def load_granite_model():
     return processor, model
 
 # --- Utility Functions ---
-# Placeholder for a drug interaction database. In a real-world app, you'd use a
-# a licensed database or a robust API like RxNav (with proper handling for its discontinuation).
-def get_drug_info(drug_name):
-    """Simulates fetching drug information from a database."""
-def get_drug_info(drug_name):
+def get_drug_info(drug_name: str):
+    """Fetches drug information from a simulated database.
+
+    Behavior:
+    - If drug_name is empty/whitespace -> return the full drug database (dict).
+    - If drug_name provided -> return the info dict for that drug (or None if not found).
+    """
     drug_data = {
         "amoxicillin": {
-            "explanation": "Amoxicillin is a broad-spectrum penicillin antibiotic used to treat bacterial infections like pneumonia, ear infections, and urinary tract infections.",
+            "explanation": "Amoxicillin is a broad-spectrum penicillin antibiotic used to treat a variety of bacterial infections, including those of the respiratory tract, urinary tract, and ear. It works by preventing bacteria from building their cell walls.",
             "dosages": {
                 "adult": "250-500 mg every 8 hours",
                 "child": "25-45 mg/kg/day in divided doses"
             },
             "alternatives": ["Azithromycin", "Doxycycline"],
-            "interactions": ["Methotrexate", "Warfarin"]
+            "interactions": ["Methotrexate", "Warfarin", "Allopurinol"],
+            "side_effects": ["Nausea", "Diarrhea", "Rash"]
         },
         "ibuprofen": {
-            "explanation": "Ibuprofen is a nonsteroidal anti-inflammatory drug (NSAID) used for pain relief, fever reduction, and inflammation.",
+            "explanation": "Ibuprofen is a nonsteroidal anti-inflammatory drug (NSAID) used for pain relief, fever reduction, and inflammation. It is commonly used for headaches, menstrual cramps, dental pain, and arthritis.",
             "dosages": {
                 "adult": "200-400 mg every 4-6 hours",
                 "child": "5-10 mg/kg every 6-8 hours"
             },
             "alternatives": ["Acetaminophen", "Naproxen"],
-            "interactions": ["Warfarin", "Aspirin", "Steroids"]
+            "interactions": ["Warfarin", "Aspirin", "Steroids", "ACE inhibitors"],
+            "side_effects": ["Stomach pain", "Heartburn", "Dizziness"]
         },
         "warfarin": {
-            "explanation": "Warfarin is an anticoagulant (blood thinner) used to prevent blood clots in conditions like atrial fibrillation, DVT, and pulmonary embolism.",
+            "explanation": "Warfarin is an anticoagulant (blood thinner) used to prevent blood clots in conditions like atrial fibrillation, DVT, and pulmonary embolism. It requires careful monitoring of INR levels to ensure effectiveness and safety.",
             "dosages": {
                 "adult": "2-10 mg/day (adjusted by INR)",
                 "child": "0.1 mg/kg/day"
             },
-            "alternatives": ["Apixaban", "Dabigatran"],
-            "interactions": ["Aspirin", "Ibuprofen", "Vitamin K-rich foods"]
+            "alternatives": ["Apixaban", "Dabigatran", "Rivaroxaban"],
+            "interactions": ["Aspirin", "Ibuprofen", "Vitamin K-rich foods", "Alcohol"],
+            "side_effects": ["Bleeding", "Bruising", "Nausea"]
         },
         "aspirin": {
-            "explanation": "Aspirin is an NSAID used for pain relief, fever, inflammation, and as an antiplatelet drug to prevent heart attacks and strokes.",
+            "explanation": "Aspirin is an NSAID used for pain relief, fever, and inflammation. In lower doses, it is used as an antiplatelet drug to prevent heart attacks and strokes.",
             "dosages": {
                 "adult": "325-650 mg every 4 hours",
-                "child": "Not recommended for children under 16"
+                "child": "Not recommended for children under 16 due to risk of Reye's syndrome."
             },
             "alternatives": ["Ibuprofen", "Acetaminophen"],
-            "interactions": ["Warfarin", "Ibuprofen", "Alcohol"]
+            "interactions": ["Warfarin", "Ibuprofen", "Alcohol", "Heparin"],
+            "side_effects": ["Stomach upset", "Bleeding", "Tinnitus (ringing in ears)"]
         },
         "paracetamol": {
-            "explanation": "Paracetamol (Acetaminophen) is an analgesic and antipyretic used for pain relief and fever reduction. It has little anti-inflammatory effect.",
+            "explanation": "Paracetamol (Acetaminophen) is an analgesic and antipyretic used for pain relief and fever reduction. It is a common over-the-counter medication.",
             "dosages": {
                 "adult": "500-1000 mg every 4-6 hours (max 4 g/day)",
                 "child": "10-15 mg/kg every 4-6 hours (max 60 mg/kg/day)"
             },
             "alternatives": ["Ibuprofen", "Naproxen"],
-            "interactions": ["Alcohol", "Warfarin"]
+            "interactions": ["Alcohol", "Warfarin (long-term use)"],
+            "side_effects": ["Liver damage (with high doses)", "Rash"]
         },
         "metformin": {
-            "explanation": "Metformin is an oral antidiabetic medication used to control blood sugar levels in type 2 diabetes by improving insulin sensitivity.",
+            "explanation": "Metformin is an oral antidiabetic medication used to control blood sugar levels in type 2 diabetes. It works by improving insulin sensitivity and reducing glucose production in the liver.",
             "dosages": {
                 "adult": "500-2000 mg/day in divided doses",
                 "child": "Not commonly used under 10 years"
             },
             "alternatives": ["Sitagliptin", "Glipizide"],
-            "interactions": ["Alcohol", "Cimetidine"]
+            "interactions": ["Alcohol", "Cimetidine", "Iodinated contrast dyes"],
+            "side_effects": ["Diarrhea", "Nausea", "Stomach cramps"]
         },
         "atorvastatin": {
-            "explanation": "Atorvastatin is a statin used to lower cholesterol and triglyceride levels, reducing the risk of heart attack and stroke.",
+            "explanation": "Atorvastatin is a statin used to lower cholesterol and triglyceride levels. It is prescribed to reduce the risk of heart attack, stroke, and other cardiovascular events.",
             "dosages": {
                 "adult": "10-80 mg once daily",
                 "child": "Not commonly used under 10 years"
             },
             "alternatives": ["Rosuvastatin", "Simvastatin"],
-            "interactions": ["Grapefruit juice", "Warfarin"]
+            "interactions": ["Grapefruit juice", "Warfarin", "Fibrates"],
+            "side_effects": ["Muscle pain", "Headache", "Nausea"]
         }
     }
 
+    if not isinstance(drug_name, str) or not drug_name.strip():
+        # Return the full database when drug_name is empty or non-string
+        return drug_data
+
+    # Return the single drug's info dict (or None if not found)
     return drug_data.get(drug_name.lower())
 
 
 def check_interactions(drugs):
-    """Simulates checking for drug-drug interactions."""
-    interactions = []
-    # Using a simple check for demonstration
-    if "warfarin" in drugs and "ibuprofen" in drugs:
-        interactions.append("Warfarin and Ibuprofen have a major interaction. Increased risk of bleeding.")
-    if "aspirin" in drugs and "warfarin" in drugs:
-        interactions.append("Aspirin and Warfarin have a major interaction. Increased risk of bleeding.")
-    return interactions if interactions else ["No major drug-drug interactions detected."]
+    """Checks for drug-drug interactions based on the provided list of drugs."""
+    found_interactions = []
+    lc_drugs = [d.lower() for d in drugs]
+
+    for drug1 in drugs:
+        info1 = get_drug_info(drug1)
+        if info1 and "interactions" in info1:
+            for interaction_drug in info1["interactions"]:
+                if interaction_drug.lower() in lc_drugs and drug1.lower() != interaction_drug.lower():
+                    # Avoid duplicates
+                    pair = tuple(sorted([drug1.lower(), interaction_drug.lower()]))
+                    message = f"**{drug1.capitalize()}** and **{interaction_drug.capitalize()}** have a potential interaction. This could increase the risk of side effects or alter the drug's effectiveness. Consult a healthcare professional."
+                    if message not in found_interactions:
+                        found_interactions.append(message)
+
+    return found_interactions if found_interactions else ["No major drug-drug interactions detected."]
+
 
 def analyze_age_dosage(age_group, drugs):
     """Provides age-specific dosage recommendations."""
@@ -115,13 +136,14 @@ def analyze_age_dosage(age_group, drugs):
     for drug in drugs:
         info = get_drug_info(drug)
         if info:
-            if age_group in info["dosages"]:
+            if age_group in info.get("dosages", {}):
                 recommendations.append(f"**{drug.capitalize()}:** {info['dosages'][age_group]} for a {age_group}.")
             else:
                 recommendations.append(f"**{drug.capitalize()}:** Dosage for {age_group} is not available or is not typically used.")
         else:
             recommendations.append(f"**{drug.capitalize()}:** Drug information not found in the database.")
     return recommendations
+
 
 def suggest_alternatives(drugs):
     """Suggests alternative medications."""
@@ -204,20 +226,17 @@ def main():
     elif input_method == "Upload Prescription Image":
         uploaded_file = st.file_uploader("Upload an image of the prescription (e.g., JPEG, PNG)", type=["jpg", "jpeg", "png"])
         if uploaded_file is not None:
-            # Read image as bytes
             image_bytes = uploaded_file.getvalue()
             st.image(image_bytes, caption="Uploaded Prescription Image.", use_column_width=True)
             
-            # Use ibm-granite to extract text
             prompt = "Extract the full drug names, dosages (e.g., 200mg), and frequency (e.g., once daily) from this medical document. List them in a clear, structured format, like 'Drug: [name], Dosage: [dosage], Frequency: [frequency]'."
             
             with st.spinner("Analyzing image with `ibm-granite` model..."):
                 extracted_text = extract_from_image(image_bytes, prompt)
                 
             st.subheader("Extracted Prescription Details:")
-            st.write(extracted_text)
+            st.markdown(extracted_text)
             
-            # Simple text parsing for demonstration
             prescription_text = extracted_text
     
     st.markdown("---")
@@ -229,8 +248,16 @@ def main():
             return
 
         with st.spinner("Analyzing prescription..."):
-            # Simple NLP for drug name extraction from text input
-            drugs = [word.lower().strip(",.").replace(" ", "") for word in prescription_text.split() if get_drug_info(word.lower().strip(",."))]
+            # Safely get the drug database (never None)
+            drug_db = get_drug_info('') or {}
+            drug_list = list(drug_db.keys())
+            drugs_found = []
+            for drug in drug_list:
+                # Use a case-insensitive regex pattern
+                if re.search(r'\b' + re.escape(drug) + r'\b', prescription_text, re.IGNORECASE):
+                    drugs_found.append(drug)
+            
+            drugs = list(set(drugs_found)) # Remove duplicates
 
             if not drugs:
                 st.warning("No recognized drugs found in the provided text.")
@@ -239,31 +266,45 @@ def main():
                 st.write(f"Identified Drugs: {', '.join([d.capitalize() for d in drugs])}")
                 st.markdown("---")
 
+                # Drug Information Section (New!)
+                st.markdown("<h3 style='color:purple;'>📋 Drug Details and Explanations</h3>", unsafe_allow_html=True)
+                for drug in drugs:
+                    info = get_drug_info(drug)
+                    if info:
+                        with st.expander(f"**Learn more about {drug.capitalize()}**"):
+                            st.write(f"**Explanation:** {info['explanation']}")
+                            if "side_effects" in info:
+                                side_effects = ", ".join(info["side_effects"])
+                                st.write(f"**Common Side Effects:** {side_effects}")
+                            st.write(f"**Known Interactions:** {', '.join(info['interactions'])}")
+                            st.write(f"**Alternatives:** {', '.join(info['alternatives'])}")
+                    else:
+                        st.write(f"**{drug.capitalize()}:** Detailed information not found.")
+                st.markdown("---")
+                
                 # Drug Interaction Detection
                 st.markdown("<h3 style='color:red;'>⚠️ Drug Interaction Detection</h3>", unsafe_allow_html=True)
                 interactions = check_interactions(drugs)
                 for i in interactions:
-                    st.write(f"- {i}")
+                    st.markdown(f"- {i}", unsafe_allow_html=True)
+                st.markdown("---")
                 
                 # Age-Specific Dosage Recommendation
                 st.markdown("<h3 style='color:blue;'>💊 Age-Specific Dosage Recommendations</h3>", unsafe_allow_html=True)
                 dosages = analyze_age_dosage(age_group, drugs)
                 for d in dosages:
-                    st.write(f"- {d}")
+                    st.markdown(f"- {d}")
 
                 # Alternative Medication Suggestions
                 st.markdown("<h3 style='color:green;'>🌿 Alternative Medication Suggestions</h3>", unsafe_allow_html=True)
                 alternatives = suggest_alternatives(drugs)
                 for a in alternatives:
-                    st.write(f"- {a}")
+                    st.markdown(f"- {a}")
 
     st.markdown("---")
     st.markdown("""
         **Note:** This is a demonstration for educational and development purposes. In a production environment,
-        a live, secure database and a robust API (like one built with FastAPI and IBM Watson) would replace
-        the simulated functions and a more sophisticated NLP model would be used.
-        The audio-to-text functionality requires a separate library, such as `SpeechRecognition`, which is not included in this single file for simplicity.
-        For example: `import speech_recognition as sr` and `r = sr.Recognizer()`
+        a live, secure database and a robust API would replace the simulated functions.
     """)
 
 if __name__ == "__main__":
